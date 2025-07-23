@@ -1,0 +1,228 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Spotify Album Ranking </title>
+  <style>
+    body {
+      background: #f4f4f4;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin: 0;
+      padding: 2rem;
+    }
+    h1 {
+      font-size: 2em;
+    }
+    .search-container {
+      margin-bottom: 1rem;
+    }
+    input, button {
+      padding: 0.5rem;
+      font-size: 1rem;
+    }
+    .album-grid {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .album {
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    .album:hover {
+      transform: scale(1.05);
+    }
+    .track-compare {
+      display: flex;
+      justify-content: center;
+      gap: 3rem;
+      margin-top: 2rem;
+    }
+    .track {
+      cursor: pointer;
+    }
+    img {
+      border-radius: 12px;
+      width: 150px;
+      height: 150px;
+      object-fit: cover;
+    }
+    .track-name {
+      margin-top: 0.5rem;
+      font-weight: bold;
+    }
+    .ranking-list {
+      margin-top: 2rem;
+      font-size: 1.1rem;
+      list-style: none;
+      padding: 0;
+    }
+    .ranking-list li {
+      background: white;
+      margin: 0.5rem auto;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      width: 80%;
+      max-width: 400px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+  </style>
+</head>
+<body>
+  <h1>Spotify Album Ranking </h1>
+  <div class="search-container">
+    <input type="text" id="artist-input" placeholder="Enter artist name" />
+    <button onclick="searchArtist()">Search</button>
+  </div>
+  <div id="album-container" class="album-grid"></div>
+  <div id="compare-container"></div>
+  <div id="ranking-container"></div>
+
+  <script>
+    const clientId = "3f3173e083604096abe93d93e05a8867";
+    const clientSecret = "76dff06debf5467aa7fe2dc911779134";
+    let token = "";
+    let currentTracks = [];
+    let roundCount = 0;
+    let maxRounds = 30;
+
+    async function getToken() {
+      const res = await fetch("https://accounts.spotify.com/api/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Authorization": "Basic " + btoa(clientId + ":" + clientSecret),
+        },
+        body: "grant_type=client_credentials",
+      });
+      const data = await res.json();
+      token = data.access_token;
+    }
+
+    async function searchArtist() {
+      document.getElementById("ranking-container").innerHTML = "";
+      document.getElementById("compare-container").innerHTML = "";
+      const query = document.getElementById("artist-input").value;
+      if (!token) await getToken();
+      const res = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=artist&limit=1`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      const artist = data.artists.items[0];
+      if (!artist) return alert("Artist not found.");
+      loadAlbums(artist.id);
+    }
+
+    async function loadAlbums(artistId) {
+      let albums = [];
+      let nextUrl = `https://api.spotify.com/v1/artists/${artistId}/albums?include_groups=album,single&limit=50`;
+      const seen = new Set();
+
+      while (nextUrl) {
+        const res = await fetch(nextUrl, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const data = await res.json();
+        for (const album of data.items) {
+          const key = album.name + "|" + album.release_date;
+          if (!seen.has(key)) {
+            seen.add(key);
+            albums.push(album);
+          }
+        }
+        nextUrl = data.next;
+      }
+
+      const albumContainer = document.getElementById("album-container");
+      albumContainer.innerHTML = "";
+      albums.forEach(album => {
+        const img = document.createElement("img");
+        img.src = album.images[0]?.url;
+        img.className = "album";
+        img.title = album.name;
+        img.onclick = () => loadTracks(album.id, album.images[0]?.url);
+        albumContainer.appendChild(img);
+      });
+    }
+
+    async function loadTracks(albumId, coverUrl) {
+      const res = await fetch(`https://api.spotify.com/v1/albums/${albumId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      currentTracks = data.tracks.items.map(track => ({
+        id: track.id,
+        name: track.name,
+        rating: 1000
+      }));
+      roundCount = 0;
+      document.getElementById("album-container").innerHTML = "";
+      showTrackComparison(coverUrl);
+    }
+
+    function showTrackComparison(coverUrl) {
+      if (currentTracks.length < 2) return;
+
+      if (roundCount >= maxRounds) {
+        showFinalRanking();
+        return;
+      }
+
+      const [trackA, trackB] = pickTwoTracks();
+      const container = document.getElementById("compare-container");
+      container.innerHTML = `
+        <h2>Which track do you prefer?</h2>
+        <div class="track-compare">
+          <div class="track" onclick="vote('${trackA.id}', '${trackB.id}', '${coverUrl}')">
+            <img src="${coverUrl}" />
+            <div class="track-name">${trackA.name}</div>
+          </div>
+          <div class="track" onclick="vote('${trackB.id}', '${trackA.id}', '${coverUrl}')">
+            <img src="${coverUrl}" />
+            <div class="track-name">${trackB.name}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function pickTwoTracks() {
+      let a, b;
+      do {
+        a = currentTracks[Math.floor(Math.random() * currentTracks.length)];
+        b = currentTracks[Math.floor(Math.random() * currentTracks.length)];
+      } while (a.id === b.id);
+      return [a, b];
+    }
+
+    function vote(winnerId, loserId, coverUrl) {
+      const winner = currentTracks.find(t => t.id === winnerId);
+      const loser = currentTracks.find(t => t.id === loserId);
+      const newRatings = updateElo(winner.rating, loser.rating);
+      winner.rating = newRatings[0];
+      loser.rating = newRatings[1];
+      roundCount++;
+      showTrackComparison(coverUrl);
+    }
+
+    function updateElo(rA, rB, k = 32) {
+      const eA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
+      const eB = 1 - eA;
+      return [rA + k * (1 - eA), rB + k * (0 - eB)];
+    }
+
+    function showFinalRanking() {
+      document.getElementById("compare-container").innerHTML = "<h2>Final Ranking</h2>";
+      const sorted = currentTracks.slice().sort((a, b) => b.rating - a.rating);
+      let html = "<ul class='ranking-list'>";
+      sorted.forEach((track, i) => {
+        html += `<li><strong>${i + 1}. ${track.name}</strong></li>`;
+      });
+      html += "</ul>";
+      document.getElementById("ranking-container").innerHTML = html;
+    }
+  </script>
+</body>
+</html>
